@@ -90,6 +90,7 @@ from subprocess import check_output, call
 class AudioBackend():
     def __init__(self, parent):
         self.device = parent.device
+        self.name = parent.name
         self.channel = parent.channel
         self.parent = parent
         self.setup(parent)
@@ -160,14 +161,26 @@ class PactlBackend(AudioBackend):
         if self.device is None:
             self.device = "0"
         self.max_volume = parent.max_volume
-        self.re_volume = re.compile(
+        self.re_volume_num = re.compile(
             r'Sink \#{}.*?Mute: (\w{{2,3}}).*?Volume:.*?(\d{{1,3}})\%'.format(self.device),
+            re.M | re.DOTALL
+        )
+        self.re_volume_name = re.compile(
+            r'Sink \#.*?Name: {}.*?Mute: (\w{{2,3}}).*?Volume:.*?(\d{{1,3}})\%'.format(self.name),
             re.M | re.DOTALL
         )
 
     def get_volume(self):
         output = check_output(['pactl', 'list', 'sinks']).decode('utf-8').strip()
-        muted, perc = self.re_volume.search(output).groups()
+        if self.name:
+            parsed = self.re_volume_name.search(output)
+        else:
+            parsed = self.re_volume_num.search(output)
+
+        muted = False
+        perc = '-'
+        if parsed:
+            muted, perc = parsed.groups()
 
         # muted should be 'on' or 'off'
         if muted in ['yes', 'no']:
@@ -183,13 +196,13 @@ class PactlBackend(AudioBackend):
             change = '{}%'.format(self.max_volume)
         else:
             change = '+{}%'.format(delta)
-        self.run_cmd(['pactl', '--', 'set-sink-volume', self.device, change])
+        self.run_cmd(['pactl', 'set-sink-volume', self.name or self.device, change])
 
     def volume_down(self, delta):
-        self.run_cmd(['pactl', '--', 'set-sink-volume', self.device, '-{}%'.format(delta)])
+        self.run_cmd(['pactl', 'set-sink-volume', self.name or self.device, '-{}%'.format(delta)])
 
     def toggle_mute(self):
-        self.run_cmd(['pactl', 'set-sink-mute', self.device, 'toggle'])
+        self.run_cmd(['pactl', 'set-sink-mute', self.name or self.device, 'toggle'])
 
 
 class Py3status:
@@ -206,6 +219,7 @@ class Py3status:
     format = u'♪: {percentage}%'
     format_muted = u'♪: muted'
     max_volume = 120
+    name = None
     thresholds = [(0, 'bad'), (20, 'degraded'), (50, 'good')]
     volume_delta = 5
 
@@ -285,9 +299,9 @@ class Py3status:
         return response
 
     def on_click(self, event):
-        """
+        '''
         Volume up/down and toggle mute.
-        """
+        '''
         button = event['button']
         # volume up
         if self.button_up and button == self.button_up:
